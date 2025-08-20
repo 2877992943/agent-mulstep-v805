@@ -444,8 +444,9 @@ class UITARSAgent:
         #         )  # 1}}}
 
         self.history_images.append(obs["screenshot"])#### 第一个元素是  新传进来的图片
-        new_image_input=obs["screenshot"]
-        new_image_input_pil=self.img2PIL(new_image_input)
+        new_image_input=obs["screenshot"]### 当前的图
+
+        #new_image_input_pil=self.img2PIL(new_image_input)
 
         if self.observation_type in ["screenshot", "screenshot_a11y_tree"]:
             base64_image = obs["screenshot"]
@@ -545,11 +546,17 @@ class UITARSAgent:
         # 顺序  系统提示词+指令+历史+图
         #self.history_responses_limituse = self.history_responses[-self.history_respons_use_num:]
         self.history_responses_limituse = self.thoughts[-self.history_respons_use_num:]
-        w, h = get_w_h(new_image_input)
-        with open(new_image_input, 'rb') as image_file:
-            encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+        w, h = get_w_h(new_image_input)### 要最后一个current img的
+        imglist_send=[]
+        for img in self.history_images[-2:]:
+            #with open(new_image_input, 'rb') as image_file:
+            with open(img, 'rb') as image_file:
+                encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
+                imglist_send.append(encoded_image)
         data = {
-            'image': encoded_image,
+            #'image': encoded_image,
+            'image':imglist_send,
             'obj': instruction,
             'w': w,
             'h': h,
@@ -585,16 +592,14 @@ class UITARSAgent:
                 ## 非拖拽
                 if 'position' in retdict['action_output'] and retdict['action_output']['position'] :
                     x,y=retdict['action_output']['position']
-                    pointhead_dic['start_box']=floatPoint2int(w,h,x,y)
+                    pointhead_dic['start_box'] =[x,y]
                 ##拖拽
                 elif 'position_start' in retdict['action_output'] and retdict['action_output']['position_start'] :
                     print('拖拽的结果',retdict['action_output'])
                     #print(done)
                     x,y=retdict['action_output']['position_start']
                     pointhead_dic['start_box']=[x,y]
-                    #pointhead_dic['start_box'] = floatPoint2int(w,h,x,y)
                     x,y= retdict['action_output']['position_end']
-                    #pointhead_dic['end_box'] =floatPoint2int(w,h,x,y)
                     pointhead_dic['end_box']=[x,y]
 
             # except Exception as e:
@@ -735,9 +740,3 @@ class UITARSAgent:
             image = image.convert("RGB")
         return image
 
-def floatPoint2int(w,h,x,y):
-    x*=w
-    y*=h
-    p=[x,y]
-    p=[int(v) for v in p]
-    return p
