@@ -15,6 +15,7 @@ API_KEY = '12345678'
 
 ####address = 'https://u468127-a486-f280633a.westx.seetacloud.com:8443'
 address='https://u468127-881c-ef97ab18.westx.seetacloud.com:8443'
+address='https://u468127-b882-86bb84ef.westx.seetacloud.com:8443'
 urla = f'{address}/action'
 urlg = f'{address}/grounding'
 

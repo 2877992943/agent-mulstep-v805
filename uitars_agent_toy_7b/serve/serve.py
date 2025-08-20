@@ -22,8 +22,10 @@ from infer_shared import (get_data_process,
                                    get_predict_text,
                                    get_predict_pos,
                           make_image_cell,
-                          make_history_cell,
-                          make_dragEnd_cell)
+                          #make_history_cell,
+                          make_dragEnd_cell,
+                          make_history,
+                          get_message2_conversation_imgbase64)
 
 from metric_util import (get_w_h,
                        floatpoint2int)
@@ -38,11 +40,13 @@ date=711
 #model_name_or_path='/root/autodl-tmp/save711/qwen2vl_warmup/checkpoint-80000'
 #model_name_or_path=f'/root/autodl-tmp/save711/sft_uos_multistep_notplanfirst/checkpoint-{step}/merged'
 ### autodl-tmp/save711/sft_uos_Iphase8w_data805_newhis_short/checkpoint-34380/merged
-step=36507
-step=34380
+### autodl-tmp/save711/sft_uos_Iphase8w_data805_newhis_2img/checkpoint-38220/merged
+#step=36507
+step=38220
 #savename="sft_uos_Iphase8w_data805"
-savename="sft_uos_Iphase8w_data805_newhis_short"
-#savename='tmp'
+### autodl-tmp/save711/sft_uos_Iphase8w_data805_newhis_2img/checkpoint-38220/merged
+savename="sft_uos_Iphase8w_data805_newhis_2img"
+
 model_name_or_path=f'/root/autodl-tmp/save{date}/{savename}/checkpoint-{step}/merged'
 
 data_processor = get_data_process(model_name_or_path)
@@ -61,56 +65,66 @@ def before_request():
 
 @app.route('/grounding',methods=['POST'])
 @torch.inference_mode()
-def grounding():
+def grounding():### 没有轨迹 和历史 ，只当前图 只1张图
     data = request.get_json()
     if 'image' not in data or 'obj' not in data:
         return jsonify({'error': 'Missing image or task field'}), 400
     ##### 获取图片和任务
     image_base64 = data['image']
     task = data['obj']
-    w,h=data['w'],data['h']
+    w, h = data['w'], data['h']
     instruction = task
     ##
     assistant_start_placeholder = True  ## grouding的时候  提供 anchor_token 预测后面的
-    convs=[make_image_cell()]
-    
+    convs = [make_image_cell()]
+
     conversation = get_conversation_imgbase64(instruction,
-                                              #system_message=system_message_map['grounding'],
+                                              # system_message=system_message_map['grounding'],
                                               convs,
                                               encoded_string_img=image_base64)
     pred = infer_result(conversation, model, tokenizer, data_processor,
                         assistant_start_placeholder,
-                       EOSname=EOS_name)  ### pred结果里有 文本序列  有 [px ,py]
+                        EOSname=EOS_name)  ### pred结果里有 文本序列  有 [px ,py]
     pos_norm = get_predict_pos(pred)
     if pos_norm:
         pos = floatpoint2int(w, h, pos_norm)
-    return jsonify({'grounding_output':pos,
+    return jsonify({'grounding_output': pos,
                     'info': f'ver({model_name_or_path})'})
+
 @app.route('/action', methods=['POST'])
 @torch.inference_mode()
-def action():
+def action(): # sys+instr + hisN...+ his2+ img2 + his1 + img1(current)
+    #参考 mk_meta_CoordFree_manual_multistep_manualThought_notplanfirst2uitarFormat_sys2reThought_newhis_2img.py
     # 获取JSON数据
     data = request.get_json()
 
-    # 检查数据是否包含必要的字段
+
+    # # 检查数据是否包含必要的字段
     if 'image' not in data or 'obj' not in data:
         return jsonify({'error': 'Missing image or task field'}), 400
 
     # 获取图片和任务
-    image_base64 = data['image']
+    image_base64_list = data['image']
+    if type(image_base64_list)!=list:image_base64_list=[image_base64_list]
+
+    if len(image_base64_list)>1:
+        print('img list ',len(image_base64_list))
     task = data['obj']
     w,h=data['w'],data['h']
     historyll=data['history']
     instruction=task
+    ### 类似 mk_xxxx.py中
     ### convs
-    convs = [make_history_cell(h) for h in historyll]
-    convs += [make_image_cell()]
+    # convs = [make_history_cell(h) for h in historyll[:-1]]
+    # convs += [make_image_cell()]
+    convs=make_history(historyll,image_base64_list)
 
     assistant_start_placeholder = False  ##
-    conversation = get_conversation_imgbase64(instruction,
+    #### 类似dataset.py中
+    conversation = get_message2_conversation_imgbase64(instruction,
                                              # system_message=system_message_map['action'],
                                               convs,
-                                              encoded_string_img=image_base64)
+                                              encoded_string_img=image_base64_list)
     pred = infer_result(conversation, 
                         model, 
                         tokenizer, 
@@ -126,12 +140,12 @@ def action():
         ### drag start
         pos_norm_start = get_predict_pos(pred)
         ### drag end
-        #instruct2 = instruction + drag_end_prompt_addition
-        convs+=[make_dragEnd_cell()]
-        conversation = get_conversation_imgbase64(instruction,
+        #convs+=[make_dragEnd_cell()]
+        convs=make_history(historyll,image_base64_list,drag_prefix=True)
+        conversation = get_message2_conversation_imgbase64(instruction,
                                                   convs,
                                                   #system_message=system_message_map['action'],
-                                                  encoded_string_img=image_base64)
+                                                  encoded_string_img=image_base64_list)
         pred = infer_result(conversation, 
                             model, 
                             tokenizer, 
@@ -145,38 +159,13 @@ def action():
         retdict={'text':text,'position_start': pos_start, 'position_end': pos_end}
     else:###非拖拽
         pos_norm = get_predict_pos(pred)
+
         if pos_norm==None:
             retdict={'text':text }
         else:
-            retdict = {'text': text,'position':pos_norm}
+            pos = floatpoint2int(w, h, pos_norm)
+            retdict = {'text': text,'position':pos,'position_norm':pos_norm}
 
-    # elif actionType in category1:  # only pos
-    #     pos_norm = get_predict_pos(pred)
-    #     pos = floatpoint2int(w, h, pos_norm)
-    #     actiondict = {'actionType': actionType, 'position': pos}
-    #     ### make pyautogui
-    # elif actionType in category3:  # only attr text
-    #     actionValue = find_actionValue(text)
-    #     actiondict = {'actionType': actionType, 'value': actionValue}
-    # elif actionType in category4:
-    #     pos_norm = get_predict_pos(pred)
-    #     pos = floatpoint2int(w, h, pos_norm)
-    #     actionValue = find_actionValue(text)
-    #     actiondict = {'actionType': actionType, 'value': actionValue, 'position': pos}
-    # elif actionType in category5:
-    #     actiondict = {'actionType': actionType}
-    # print(actiondict)
-
-
-    # 将base64编码的图片解码
-    #image_bytes = base64.b64decode(image_base64)
-    #image = Image.open(io.BytesIO(image_bytes))
-    # 将处理后的图片保存到内存中的BytesIO对象
-    # img_byte_arr = io.BytesIO()
-    # image.save(img_byte_arr, format='PNG')
-    # img_byte_arr = img_byte_arr.getvalue()
-    # 将处理后的图片编码为base64
-    #processed_image_base64 = base64.b64encode(img_byte_arr).decode('utf-8')
 
     # 返回JSON响应
     #log1 = getlog()
